@@ -4,7 +4,6 @@ Connects to the FastAPI backend running at http://localhost:8000.
 """
 
 from datetime import datetime, timezone
-from decimal import Decimal
 import uuid
 import requests
 import streamlit as st
@@ -48,21 +47,40 @@ def handle_error_response(response):
         return f"Error {response.status_code}: {response.text}"
 
 
+# Check backend liveness
+backend_online = False
+try:
+    health_res = requests.get(f"{st.session_state.api_url}/health/live", timeout=1.5)
+    if health_res.status_code == 200:
+        backend_online = True
+except Exception:
+    backend_online = False
+
 # Sidebar Navigation
 st.sidebar.title("💰 Finance Tracker")
 
 api_base = st.sidebar.text_input("Backend API URL", value=st.session_state.api_url)
 st.session_state.api_url = api_base.rstrip("/")
 
-# Health indicator
-try:
-    health_res = requests.get(f"{st.session_state.api_url}/health/live", timeout=2)
-    if health_res.status_code == 200:
-        st.sidebar.success("🟢 Backend Connected", icon="✅")
-    else:
-        st.sidebar.warning("🟡 Backend Status: Degraded")
-except Exception:
-    st.sidebar.error("🔴 Backend Offline (Start FastAPI on port 8000)")
+if backend_online:
+    st.sidebar.success("🟢 Backend Connected", icon="✅")
+else:
+    st.sidebar.error("🔴 Backend Offline")
+    st.sidebar.caption("Run `run_backend.bat` or `uvicorn app.main:app --port 8000` to start it.")
+
+if not backend_online:
+    st.error(
+        "🚨 **FastAPI Backend is Offline!**\n\n"
+        "Streamlit cannot reach the backend server at `" + st.session_state.api_url + "`.\n\n"
+        "**To start the backend:**\n"
+        "1. Open a new terminal in this folder:\n"
+        "   ```powershell\n"
+        "   cd 'C:\\Users\\Shishir Singh\\OneDrive\\Desktop\\personal-finance-tracker'\n"
+        "   .\\.venv\\Scripts\\Activate.ps1\n"
+        "   uvicorn app.main:app --port 8000 --reload\n"
+        "   ```\n"
+        "2. Or simply double-click **`run_backend.bat`** (or **`run_all.bat`**)."
+    )
 
 if st.session_state.current_user:
     st.sidebar.info(
@@ -124,6 +142,11 @@ if menu == "🔐 Login & Register":
                             st.rerun()
                         else:
                             st.error(handle_error_response(res))
+                    except requests.exceptions.ConnectionError:
+                        st.error(
+                            "❌ Connection refused: Could not reach the backend at "
+                            f"{st.session_state.api_url}. Please ensure the FastAPI backend is running on port 8000."
+                        )
                     except Exception as e:
                         st.error(f"Failed to connect to server: {e}")
 
@@ -150,6 +173,11 @@ if menu == "🔐 Login & Register":
                             st.success("Account registered successfully! Please switch to the Log In tab.")
                         else:
                             st.error(handle_error_response(res))
+                    except requests.exceptions.ConnectionError:
+                        st.error(
+                            "❌ Connection refused: Could not reach the backend at "
+                            f"{st.session_state.api_url}. Please ensure the FastAPI backend is running on port 8000."
+                        )
                     except Exception as e:
                         st.error(f"Registration request failed: {e}")
 
@@ -179,42 +207,48 @@ elif menu == "💳 Accounts":
                 if not acc_name:
                     st.warning("Account name is required.")
                 else:
-                    res = requests.post(
-                        f"{st.session_state.api_url}/api/v1/accounts",
-                        headers=get_headers(),
-                        json={"name": acc_name.strip(), "type": acc_type, "currency": currency.upper()},
-                    )
-                    if res.status_code == 201:
-                        st.success(f"Account '{acc_name}' created successfully!")
-                        st.rerun()
-                    else:
-                        st.error(handle_error_response(res))
-
-    # List Accounts
-    res = requests.get(f"{st.session_state.api_url}/api/v1/accounts?limit=50", headers=get_headers())
-    if res.status_code == 200:
-        data = res.json()
-        accounts = data.get("items", [])
-        if not accounts:
-            st.info("No accounts created yet. Expand the box above to add your first account!")
-        else:
-            for acc in accounts:
-                with st.container(border=True):
-                    c1, c2, c3, c4 = st.columns([3, 2, 2, 1])
-                    c1.markdown(f"**{acc['name']}**")
-                    c2.markdown(f"Type: `{acc['type'].title()}` | Currency: `{acc['currency']}`")
-                    stale_badge = "💤 Stale (>90d inactive)" if acc.get("is_stale") else "⚡ Active"
-                    c3.markdown(f"Status: {stale_badge}")
-                    if c4.button("Delete", key=f"del_acc_{acc['id']}"):
-                        del_res = requests.delete(
-                            f"{st.session_state.api_url}/api/v1/accounts/{acc['id']}",
+                    try:
+                        res = requests.post(
+                            f"{st.session_state.api_url}/api/v1/accounts",
                             headers=get_headers(),
+                            json={"name": acc_name.strip(), "type": acc_type, "currency": currency.upper()},
                         )
-                        if del_res.status_code == 204:
-                            st.success("Account deleted.")
+                        if res.status_code == 201:
+                            st.success(f"Account '{acc_name}' created successfully!")
                             st.rerun()
                         else:
-                            st.error(handle_error_response(del_res))
+                            st.error(handle_error_response(res))
+                    except Exception as e:
+                        st.error(f"Request failed: {e}")
+
+    # List Accounts
+    try:
+        res = requests.get(f"{st.session_state.api_url}/api/v1/accounts?limit=50", headers=get_headers())
+        if res.status_code == 200:
+            data = res.json()
+            accounts = data.get("items", [])
+            if not accounts:
+                st.info("No accounts created yet. Expand the box above to add your first account!")
+            else:
+                for acc in accounts:
+                    with st.container(border=True):
+                        c1, c2, c3, c4 = st.columns([3, 2, 2, 1])
+                        c1.markdown(f"**{acc['name']}**")
+                        c2.markdown(f"Type: `{acc['type'].title()}` | Currency: `{acc['currency']}`")
+                        stale_badge = "💤 Stale (>90d inactive)" if acc.get("is_stale") else "⚡ Active"
+                        c3.markdown(f"Status: {stale_badge}")
+                        if c4.button("Delete", key=f"del_acc_{acc['id']}"):
+                            del_res = requests.delete(
+                                f"{st.session_state.api_url}/api/v1/accounts/{acc['id']}",
+                                headers=get_headers(),
+                            )
+                            if del_res.status_code == 204:
+                                st.success("Account deleted.")
+                                st.rerun()
+                            else:
+                                st.error(handle_error_response(del_res))
+    except Exception as e:
+        st.error(f"Could not load accounts: {e}")
 
 # ----------------------------------------------------
 # 3. CATEGORIES
@@ -238,41 +272,47 @@ elif menu == "🏷️ Categories":
                 if not cat_name:
                     st.warning("Category name cannot be empty.")
                 else:
-                    res = requests.post(
-                        f"{st.session_state.api_url}/api/v1/categories",
-                        headers=get_headers(),
-                        json={"name": cat_name.strip(), "kind": cat_kind, "color": cat_color.upper()},
-                    )
-                    if res.status_code == 201:
-                        st.success(f"Category '{cat_name}' added!")
-                        st.rerun()
-                    else:
-                        st.error(handle_error_response(res))
-
-    res = requests.get(f"{st.session_state.api_url}/api/v1/categories", headers=get_headers())
-    if res.status_code == 200:
-        categories = res.json()
-        if not categories:
-            st.info("No categories configured. Add your first category above!")
-        else:
-            col_inc, col_exp = st.columns(2)
-            with col_inc:
-                st.subheader("💵 Income Categories")
-                for cat in [c for c in categories if c["kind"] == "income"]:
-                    with st.container(border=True):
-                        st.markdown(f"🏷️ **{cat['name']}** (Color: `{cat['color'] or 'None'}`)")
-                        if st.button("Delete", key=f"del_cat_{cat['id']}"):
-                            requests.delete(f"{st.session_state.api_url}/api/v1/categories/{cat['id']}", headers=get_headers())
+                    try:
+                        res = requests.post(
+                            f"{st.session_state.api_url}/api/v1/categories",
+                            headers=get_headers(),
+                            json={"name": cat_name.strip(), "kind": cat_kind, "color": cat_color.upper()},
+                        )
+                        if res.status_code == 201:
+                            st.success(f"Category '{cat_name}' added!")
                             st.rerun()
+                        else:
+                            st.error(handle_error_response(res))
+                    except Exception as e:
+                        st.error(f"Request failed: {e}")
 
-            with col_exp:
-                st.subheader("🛒 Expense Categories")
-                for cat in [c for c in categories if c["kind"] == "expense"]:
-                    with st.container(border=True):
-                        st.markdown(f"🏷️ **{cat['name']}** (Color: `{cat['color'] or 'None'}`)")
-                        if st.button("Delete", key=f"del_cat_{cat['id']}"):
-                            requests.delete(f"{st.session_state.api_url}/api/v1/categories/{cat['id']}", headers=get_headers())
-                            st.rerun()
+    try:
+        res = requests.get(f"{st.session_state.api_url}/api/v1/categories", headers=get_headers())
+        if res.status_code == 200:
+            categories = res.json()
+            if not categories:
+                st.info("No categories configured. Add your first category above!")
+            else:
+                col_inc, col_exp = st.columns(2)
+                with col_inc:
+                    st.subheader("💵 Income Categories")
+                    for cat in [c for c in categories if c["kind"] == "income"]:
+                        with st.container(border=True):
+                            st.markdown(f"🏷️ **{cat['name']}** (Color: `{cat['color'] or 'None'}`)")
+                            if st.button("Delete", key=f"del_cat_{cat['id']}"):
+                                requests.delete(f"{st.session_state.api_url}/api/v1/categories/{cat['id']}", headers=get_headers())
+                                st.rerun()
+
+                with col_exp:
+                    st.subheader("🛒 Expense Categories")
+                    for cat in [c for c in categories if c["kind"] == "expense"]:
+                        with st.container(border=True):
+                            st.markdown(f"🏷️ **{cat['name']}** (Color: `{cat['color'] or 'None'}`)")
+                            if st.button("Delete", key=f"del_cat_{cat['id']}"):
+                                requests.delete(f"{st.session_state.api_url}/api/v1/categories/{cat['id']}", headers=get_headers())
+                                st.rerun()
+    except Exception as e:
+        st.error(f"Could not load categories: {e}")
 
 # ----------------------------------------------------
 # 4. TRANSACTIONS
@@ -281,12 +321,15 @@ elif menu == "💸 Transactions":
     st.header("💸 Financial Transactions")
     st.caption("Record new income and expense entries with idempotency protection.")
 
-    # Fetch accounts and categories for selectors
-    accs_res = requests.get(f"{st.session_state.api_url}/api/v1/accounts?limit=100", headers=get_headers())
-    cats_res = requests.get(f"{st.session_state.api_url}/api/v1/categories", headers=get_headers())
-
-    accounts = accs_res.json().get("items", []) if accs_res.status_code == 200 else []
-    categories = cats_res.json() if cats_res.status_code == 200 else []
+    accounts = []
+    categories = []
+    try:
+        accs_res = requests.get(f"{st.session_state.api_url}/api/v1/accounts?limit=100", headers=get_headers())
+        cats_res = requests.get(f"{st.session_state.api_url}/api/v1/categories", headers=get_headers())
+        accounts = accs_res.json().get("items", []) if accs_res.status_code == 200 else []
+        categories = cats_res.json() if cats_res.status_code == 200 else []
+    except Exception as e:
+        st.error(f"Could not load accounts or categories: {e}")
 
     if not accounts:
         st.warning("⚠️ You must create at least one Account before logging transactions.")
@@ -329,34 +372,40 @@ elif menu == "💸 Transactions":
                     if use_idempotency:
                         headers["Idempotency-Key"] = str(uuid.uuid4())
 
-                    res = requests.post(f"{st.session_state.api_url}/api/v1/transactions", headers=headers, json=payload)
-                    if res.status_code == 201:
-                        st.success(f"Transaction of ${amount_input:.2f} recorded!")
-                        st.rerun()
-                    else:
-                        st.error(handle_error_response(res))
+                    try:
+                        res = requests.post(f"{st.session_state.api_url}/api/v1/transactions", headers=headers, json=payload)
+                        if res.status_code == 201:
+                            st.success(f"Transaction of ${amount_input:.2f} recorded!")
+                            st.rerun()
+                        else:
+                            st.error(handle_error_response(res))
+                    except Exception as e:
+                        st.error(f"Transaction failed: {e}")
 
     # List Recent Transactions
     st.subheader("Recent Transaction Log")
-    tx_res = requests.get(f"{st.session_state.api_url}/api/v1/transactions?limit=25", headers=get_headers())
-    if tx_res.status_code == 200:
-        tx_data = tx_res.json()
-        tx_list = tx_data.get("items", [])
-        if not tx_list:
-            st.info("No transactions logged yet.")
-        else:
-            table_rows = []
-            for t in tx_list:
-                cat_label = t["category"]["name"] if t.get("category") else "Uncategorized"
-                sign = "+" if t["direction"] == "income" else "-"
-                table_rows.append({
-                    "Date (UTC)": t["occurred_at"][:10],
-                    "Amount": f"{sign}${float(t['amount']):,.2f}",
-                    "Direction": t["direction"].upper(),
-                    "Category": cat_label,
-                    "Description": t["description"] or "-",
-                })
-            st.dataframe(table_rows, use_container_width=True)
+    try:
+        tx_res = requests.get(f"{st.session_state.api_url}/api/v1/transactions?limit=25", headers=get_headers())
+        if tx_res.status_code == 200:
+            tx_data = tx_res.json()
+            tx_list = tx_data.get("items", [])
+            if not tx_list:
+                st.info("No transactions logged yet.")
+            else:
+                table_rows = []
+                for t in tx_list:
+                    cat_label = t["category"]["name"] if t.get("category") else "Uncategorized"
+                    sign = "+" if t["direction"] == "income" else "-"
+                    table_rows.append({
+                        "Date (UTC)": t["occurred_at"][:10],
+                        "Amount": f"{sign}${float(t['amount']):,.2f}",
+                        "Direction": t["direction"].upper(),
+                        "Category": cat_label,
+                        "Description": t["description"] or "-",
+                    })
+                st.dataframe(table_rows, use_container_width=True)
+    except Exception as e:
+        st.error(f"Could not load transactions: {e}")
 
 # ----------------------------------------------------
 # 5. BUDGETS
@@ -368,8 +417,12 @@ elif menu == "🎯 Budgets":
     current_month = datetime.now().strftime("%Y-%m")
     selected_month = st.text_input("Target Month (YYYY-MM)", value=current_month, max_chars=7)
 
-    cats_res = requests.get(f"{st.session_state.api_url}/api/v1/categories?kind=expense", headers=get_headers())
-    categories = cats_res.json() if cats_res.status_code == 200 else []
+    categories = []
+    try:
+        cats_res = requests.get(f"{st.session_state.api_url}/api/v1/categories?kind=expense", headers=get_headers())
+        categories = cats_res.json() if cats_res.status_code == 200 else []
+    except Exception as e:
+        st.error(f"Could not load categories: {e}")
 
     if not categories:
         st.warning("⚠️ Please create at least one Expense Category before setting budgets.")
@@ -383,33 +436,39 @@ elif menu == "🎯 Budgets":
 
                 if b_submit:
                     cat_id = cat_dict[b_cat]
-                    res = requests.put(
-                        f"{st.session_state.api_url}/api/v1/budgets/{cat_id}?month={selected_month}",
-                        headers=get_headers(),
-                        json={"amount": f"{b_amount:.2f}"},
-                    )
-                    if res.status_code == 200:
-                        st.success(f"Budget of ${b_amount:.2f} set for {b_cat} in {selected_month}!")
-                        st.rerun()
-                    else:
-                        st.error(handle_error_response(res))
+                    try:
+                        res = requests.put(
+                            f"{st.session_state.api_url}/api/v1/budgets/{cat_id}?month={selected_month}",
+                            headers=get_headers(),
+                            json={"amount": f"{b_amount:.2f}"},
+                        )
+                        if res.status_code == 200:
+                            st.success(f"Budget of ${b_amount:.2f} set for {b_cat} in {selected_month}!")
+                            st.rerun()
+                        else:
+                            st.error(handle_error_response(res))
+                    except Exception as e:
+                        st.error(f"Budget update failed: {e}")
 
         # Show existing budgets
-        b_list_res = requests.get(f"{st.session_state.api_url}/api/v1/budgets?month={selected_month}", headers=get_headers())
-        if b_list_res.status_code == 200:
-            budgets = b_list_res.json()
-            if not budgets:
-                st.info(f"No budgets defined for {selected_month}.")
-            else:
-                for b in budgets:
-                    cname = b["category"]["name"] if b.get("category") else "Unknown"
-                    with st.container(border=True):
-                        c1, c2, c3 = st.columns([4, 4, 2])
-                        c1.markdown(f"🎯 **{cname}**")
-                        c2.markdown(f"Budget Limit: **${float(b['amount']):,.2f}**")
-                        if c3.button("Delete", key=f"del_b_{b['id']}"):
-                            requests.delete(f"{st.session_state.api_url}/api/v1/budgets/{b['id']}", headers=get_headers())
-                            st.rerun()
+        try:
+            b_list_res = requests.get(f"{st.session_state.api_url}/api/v1/budgets?month={selected_month}", headers=get_headers())
+            if b_list_res.status_code == 200:
+                budgets = b_list_res.json()
+                if not budgets:
+                    st.info(f"No budgets defined for {selected_month}.")
+                else:
+                    for b in budgets:
+                        cname = b["category"]["name"] if b.get("category") else "Unknown"
+                        with st.container(border=True):
+                            c1, c2, c3 = st.columns([4, 4, 2])
+                            c1.markdown(f"🎯 **{cname}**")
+                            c2.markdown(f"Budget Limit: **${float(b['amount']):,.2f}**")
+                            if c3.button("Delete", key=f"del_b_{b['id']}"):
+                                requests.delete(f"{st.session_state.api_url}/api/v1/budgets/{b['id']}", headers=get_headers())
+                                st.rerun()
+        except Exception as e:
+            st.error(f"Could not load budgets: {e}")
 
 # ----------------------------------------------------
 # 6. REPORTS & ANALYTICS
@@ -422,51 +481,60 @@ elif menu == "📊 Reports":
     rep_month = st.text_input("Report Month (YYYY-MM)", value=current_month, max_chars=7)
 
     # 1. Monthly Summary
-    sum_res = requests.get(f"{st.session_state.api_url}/api/v1/reports/monthly-summary?month={rep_month}", headers=get_headers())
-    if sum_res.status_code == 200:
-        summary = sum_res.json()
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Total Income", f"${float(summary['total_income']):,.2f}")
-        m2.metric("Total Expense", f"${float(summary['total_expense']):,.2f}")
-        net = float(summary["net_savings"])
-        m3.metric("Net Savings", f"${net:,.2f}", delta=f"{summary['savings_rate']}% Saved")
-        m4.metric("Savings Rate", f"{summary['savings_rate']}%")
+    try:
+        sum_res = requests.get(f"{st.session_state.api_url}/api/v1/reports/monthly-summary?month={rep_month}", headers=get_headers())
+        if sum_res.status_code == 200:
+            summary = sum_res.json()
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("Total Income", f"${float(summary['total_income']):,.2f}")
+            m2.metric("Total Expense", f"${float(summary['total_expense']):,.2f}")
+            net = float(summary["net_savings"])
+            m3.metric("Net Savings", f"${net:,.2f}", delta=f"{summary['savings_rate']}% Saved")
+            m4.metric("Savings Rate", f"{summary['savings_rate']}%")
+    except Exception as e:
+        st.error(f"Could not load summary: {e}")
 
     st.divider()
 
     # 2. Budget vs Actual
     st.subheader(f"🎯 Budget vs Actual Spending ({rep_month})")
-    bva_res = requests.get(f"{st.session_state.api_url}/api/v1/reports/budget-vs-actual?month={rep_month}", headers=get_headers())
-    if bva_res.status_code == 200:
-        bva = bva_res.json()
-        items = bva.get("items", [])
-        if not items:
-            st.info("No budgets or categorized spending found for this month.")
-        else:
-            for item in items:
-                b_amt = float(item["budgeted_amount"])
-                a_amt = float(item["actual_amount"])
-                pct = float(item["percentage_used"])
-                col_a, col_b = st.columns([3, 7])
-                with col_a:
-                    st.write(f"**{item['category_name']}**")
-                    st.caption(f"Spent ${a_amt:,.2f} of ${b_amt:,.2f} ({pct:.1f}%)")
-                with col_b:
-                    progress_val = min(max(pct / 100.0, 0.0), 1.0)
-                    st.progress(progress_val)
-                    if a_amt > b_amt and b_amt > 0:
-                        st.caption(f"⚠️ Over budget by ${a_amt - b_amt:,.2f}")
+    try:
+        bva_res = requests.get(f"{st.session_state.api_url}/api/v1/reports/budget-vs-actual?month={rep_month}", headers=get_headers())
+        if bva_res.status_code == 200:
+            bva = bva_res.json()
+            items = bva.get("items", [])
+            if not items:
+                st.info("No budgets or categorized spending found for this month.")
+            else:
+                for item in items:
+                    b_amt = float(item["budgeted_amount"])
+                    a_amt = float(item["actual_amount"])
+                    pct = float(item["percentage_used"])
+                    col_a, col_b = st.columns([3, 7])
+                    with col_a:
+                        st.write(f"**{item['category_name']}**")
+                        st.caption(f"Spent ${a_amt:,.2f} of ${b_amt:,.2f} ({pct:.1f}%)")
+                    with col_b:
+                        progress_val = min(max(pct / 100.0, 0.0), 1.0)
+                        st.progress(progress_val)
+                        if a_amt > b_amt and b_amt > 0:
+                            st.caption(f"⚠️ Over budget by ${a_amt - b_amt:,.2f}")
+    except Exception as e:
+        st.error(f"Could not load budget vs actual: {e}")
 
     st.divider()
 
     # 3. Category Breakdown Chart
     st.subheader(f"🛒 Expense Breakdown by Category ({rep_month})")
-    bk_res = requests.get(f"{st.session_state.api_url}/api/v1/reports/category-breakdown?month={rep_month}&direction=expense", headers=get_headers())
-    if bk_res.status_code == 200:
-        breakdown = bk_res.json()
-        cat_items = breakdown.get("items", [])
-        if cat_items:
-            chart_data = {item["category_name"]: float(item["total_amount"]) for item in cat_items}
-            st.bar_chart(chart_data)
-        else:
-            st.info("No expense transactions recorded in this month.")
+    try:
+        bk_res = requests.get(f"{st.session_state.api_url}/api/v1/reports/category-breakdown?month={rep_month}&direction=expense", headers=get_headers())
+        if bk_res.status_code == 200:
+            breakdown = bk_res.json()
+            cat_items = breakdown.get("items", [])
+            if cat_items:
+                chart_data = {item["category_name"]: float(item["total_amount"]) for item in cat_items}
+                st.bar_chart(chart_data)
+            else:
+                st.info("No expense transactions recorded in this month.")
+    except Exception as e:
+        st.error(f"Could not load breakdown: {e}")

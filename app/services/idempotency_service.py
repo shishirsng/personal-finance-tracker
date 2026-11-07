@@ -37,7 +37,11 @@ class IdempotencyService:
         If hash differs: raise ConflictError (409) indicating key reuse with mutated payload.
         """
         key = self._make_key(user_id, idempotency_key)
-        stored_val = await self.redis.get(key)
+        try:
+            stored_val = await self.redis.get(key)
+        except Exception:
+            return None
+
         if stored_val is None:
             return None
 
@@ -65,4 +69,7 @@ class IdempotencyService:
             "status_code": status_code,
             "response_body": response_body,
         }
-        await self.redis.set(key, json.dumps(payload), ex=ttl)
+        try:
+            await self.redis.set(key, json.dumps(payload), ex=ttl)
+        except Exception:
+            pass

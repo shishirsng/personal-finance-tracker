@@ -31,7 +31,10 @@ class TransactionService:
         """Invalidate the Redis monthly summary cache for this user and month."""
         month_str = dt.strftime("%Y-%m")
         cache_key = f"cache:reports:monthly-summary:{user_id}:{month_str}"
-        await self.redis.delete(cache_key)
+        try:
+            await self.redis.delete(cache_key)
+        except Exception:
+            pass
 
     async def create_transaction(
         self,

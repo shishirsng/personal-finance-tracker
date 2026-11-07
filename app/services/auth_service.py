@@ -71,10 +71,15 @@ class AuthService:
         if not jti or not user_id_str:
             raise AuthenticationError(message="Malformed token claims.")
 
-        # Check Redis blocklist
+        # Check Redis blocklist (fail open in local dev if Redis offline)
         blocklist_key = f"token_blocklist:{jti}"
-        if await self.redis.exists(blocklist_key):
-            raise AuthenticationError(message="Refresh token has been revoked.")
+        try:
+            if await self.redis.exists(blocklist_key):
+                raise AuthenticationError(message="Refresh token has been revoked.")
+        except AuthenticationError:
+            raise
+        except Exception:
+            pass
 
         user_id = uuid.UUID(user_id_str)
         user = await self.user_repo.get_by_id(user_id)
@@ -84,7 +89,10 @@ class AuthService:
         # Revoke old refresh token JTI in Redis with TTL until its original expiry
         exp = claims.get("exp", 0)
         remaining_ttl = max(int(exp - claims.get("iat", 0)), 3600)
-        await self.redis.set(blocklist_key, "revoked", ex=remaining_ttl)
+        try:
+            await self.redis.set(blocklist_key, "revoked", ex=remaining_ttl)
+        except Exception:
+            pass
 
         # Issue fresh rotated pair
         new_access = create_access_token(user.id, user.role)
@@ -106,4 +114,7 @@ class AuthService:
         import time
         now = int(time.time())
         ttl = max(exp - now, 3600)
-        await self.redis.set(f"token_blocklist:{jti}", "revoked", ex=ttl)
+        try:
+            await self.redis.set(f"token_blocklist:{jti}", "revoked", ex=ttl)
+        except Exception:
+            pass

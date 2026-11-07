@@ -47,16 +47,19 @@ class ReportService:
         Cached in Redis with REPORT_CACHE_TTL_SECONDS. Invalidation occurs on any write affecting user+month.
         """
         cache_key = f"cache:reports:monthly-summary:{user_id}:{month}"
-        cached = await self.redis.get(cache_key)
-        if cached:
-            data = json.loads(cached)
-            return MonthlySummaryResponse(
-                month=data["month"],
-                total_income=Decimal(data["total_income"]),
-                total_expense=Decimal(data["total_expense"]),
-                net_savings=Decimal(data["net_savings"]),
-                savings_rate=Decimal(data["savings_rate"]),
-            )
+        try:
+            cached = await self.redis.get(cache_key)
+            if cached:
+                data = json.loads(cached)
+                return MonthlySummaryResponse(
+                    month=data["month"],
+                    total_income=Decimal(data["total_income"]),
+                    total_expense=Decimal(data["total_expense"]),
+                    net_savings=Decimal(data["net_savings"]),
+                    savings_rate=Decimal(data["savings_rate"]),
+                )
+        except Exception:
+            pass
 
         start_dt, end_dt = self._parse_month(month)
         transactions = await self.tx_repo.get_monthly_transactions(user_id, start_dt, end_dt)
@@ -91,7 +94,10 @@ class ReportService:
             "net_savings": str(net_savings),
             "savings_rate": str(savings_rate),
         }
-        await self.redis.set(cache_key, json.dumps(cache_data), ex=settings.REPORT_CACHE_TTL_SECONDS)
+        try:
+            await self.redis.set(cache_key, json.dumps(cache_data), ex=settings.REPORT_CACHE_TTL_SECONDS)
+        except Exception:
+            pass
         return summary
 
     async def get_category_breakdown(

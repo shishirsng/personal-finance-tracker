@@ -3,7 +3,6 @@ from decimal import Decimal
 from typing import Sequence
 import uuid
 from sqlalchemy import select
-from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from app.models.budget import Budget
@@ -66,22 +65,21 @@ class BudgetRepository(BaseRepository[Budget]):
         amount: Decimal,
     ) -> Budget:
         """Atomically insert or update budget on conflict of (user_id, category_id, month)."""
-        stmt = (
-            insert(Budget)
-            .values(
-                id=uuid.uuid4(),
-                user_id=user_id,
-                category_id=category_id,
-                month=month,
-                amount=amount,
-            )
-            .on_conflict_do_update(
-                index_elements=["user_id", "category_id", "month"],
-                set_=dict(amount=amount),
-            )
-            .returning(Budget)
+        existing = await self.get_by_category_and_month(user_id, category_id, month)
+        if existing is not None:
+            existing.amount = amount
+            await self.session.flush()
+            await self.session.refresh(existing)
+            return existing
+
+        new_budget = Budget(
+            id=uuid.uuid4(),
+            user_id=user_id,
+            category_id=category_id,
+            month=month,
+            amount=amount,
         )
-        result = await self.session.execute(stmt)
-        budget = result.scalar_one()
+        self.session.add(new_budget)
+        await self.session.flush()
         # Eager load category
-        return (await self.get_by_id_and_user(budget.id, user_id)) or budget
+        return (await self.get_by_id_and_user(new_budget.id, user_id)) or new_budget

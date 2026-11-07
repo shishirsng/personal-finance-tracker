@@ -20,7 +20,10 @@ class BudgetService:
 
     async def _invalidate_report_cache(self, user_id: uuid.UUID, month: str) -> None:
         cache_key = f"cache:reports:monthly-summary:{user_id}:{month}"
-        await self.redis.delete(cache_key)
+        try:
+            await self.redis.delete(cache_key)
+        except Exception:
+            pass
 
     async def upsert_budget(
         self,

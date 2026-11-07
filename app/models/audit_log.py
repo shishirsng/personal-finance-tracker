@@ -1,10 +1,13 @@
 """Audit log model for background tasks and security events."""
 from typing import Any
 import uuid
-from sqlalchemy import Index, String
+from sqlalchemy import JSON, Index, String
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 from app.models.base import Base, TimestampMixin
+
+# Use PostgreSQL JSONB when available, falling back to JSON on SQLite
+JSON_TYPE = JSONB().with_variant(JSON, "sqlite")
 
 
 class AuditLog(Base, TimestampMixin):
@@ -25,6 +28,6 @@ class AuditLog(Base, TimestampMixin):
         nullable=False,
     )
     payload: Mapped[dict[str, Any]] = mapped_column(
-        JSONB,
+        JSON_TYPE,
         nullable=False,
     )

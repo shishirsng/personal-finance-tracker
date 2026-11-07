@@ -6,9 +6,12 @@ from prometheus_fastapi_instrumentator import Instrumentator
 from app.api.v1.ops import router as ops_router
 from app.api.v1.router import api_v1_router
 from app.config import get_settings
+from app.core.database import engine
 from app.core.logging import get_logger, setup_logging
 from app.core.middleware import RequestIDAndLoggingMiddleware, setup_exception_handlers
-from app.core.redis import close_redis, get_redis_client
+from app.core.redis import close_redis, get_redis_client, set_fake_redis
+from app.models.base import Base
+import app.models  # noqa: F401
 
 settings = get_settings()
 logger = get_logger("app.main")
@@ -20,13 +23,24 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     setup_logging(debug=settings.DEBUG)
     logger.info("app_startup", project=settings.PROJECT_NAME, environment=settings.ENVIRONMENT)
 
-    # Pre-warm Redis connection
+    # 1. Database schema initialization for SQLite dev mode
+    if "sqlite" in settings.async_database_url:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        logger.info("sqlite_schema_initialized")
+
+    # 2. Redis connection test with transparent local fallback
     redis = get_redis_client()
     try:
         await redis.ping()
         logger.info("redis_connected", host=settings.REDIS_HOST, port=settings.REDIS_PORT)
     except Exception as exc:
-        logger.warning("redis_connection_warning", error=str(exc))
+        logger.warning(
+            "redis_unreachable_using_fakeredis",
+            error=str(exc),
+            note="Using in-memory Redis fallback for local development.",
+        )
+        set_fake_redis()
 
     yield
 
@@ -56,9 +70,7 @@ def create_app() -> FastAPI:
     Instrumentator().instrument(app).expose(app, endpoint="/metrics")
 
     # 4. Mount API routers
-    # Root level ops endpoints (/health/live, /health/ready)
     app.include_router(ops_router)
-    # Versioned API routes (/api/v1/...)
     app.include_router(api_v1_router, prefix=settings.API_V1_PREFIX)
 
     return app

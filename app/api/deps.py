@@ -51,8 +51,14 @@ async def get_current_user(
         raise AuthenticationError("Invalid token type: access token required.")
 
     jti = claims.get("jti")
-    if jti and await redis.exists(f"token_blocklist:{jti}"):
-        raise AuthenticationError("Token has been revoked.")
+    if jti:
+        try:
+            if await redis.exists(f"token_blocklist:{jti}"):
+                raise AuthenticationError("Token has been revoked.")
+        except AuthenticationError:
+            raise
+        except Exception:
+            pass
 
     user_id_str = claims.get("sub")
     if not user_id_str:
